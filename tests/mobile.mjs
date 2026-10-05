@@ -100,7 +100,15 @@ export async function verifyMobile(browser, url, jpeg) {
           'Rotating the device must not change crop measurements');
       }
       await page.setViewportSize(viewports[0]);
-      for (const name of ['Download US Letter print PDF', 'Download 300 DPI JPG']) {
+      for (const { paper, name, width, height } of [
+        { paper: 'letter', name: 'Download US Letter print PDF', width: 612, height: 792 },
+        { paper: 'a4', name: 'Download DIN A4 print PDF', width: 210 * 72 / 25.4, height: 297 * 72 / 25.4 },
+        { paper: 'photo10x15', name: 'Download 10 × 15 cm print PDF', width: (format === 'us' ? 150 : 100) * 72 / 25.4, height: (format === 'us' ? 100 : 150) * 72 / 25.4 },
+        { paper: 'photo4x6', name: 'Download 4 × 6 in print PDF', width: format === 'us' ? 432 : 288, height: format === 'us' ? 288 : 432 },
+        { paper: null, name: 'Download 300 DPI JPG' },
+      ]) {
+        if (paper) await page.locator('#paper').selectOption(paper);
+        await verifyLayout();
         const button = page.getByRole('button', { name });
         assert.equal(await button.isEnabled(), true, await page.locator('.review').innerText());
         const waiting = page.waitForEvent('download');
@@ -111,8 +119,8 @@ export async function verifyMobile(browser, url, jpeg) {
         if (name.endsWith('PDF')) {
           const pdf = await PDFDocument.load(bytes);
           assert.equal(pdf.getPageCount(), 1);
-          assert.ok(Math.abs(pdf.getPage(0).getWidth() - 612) < .001);
-          assert.ok(Math.abs(pdf.getPage(0).getHeight() - 792) < .001);
+          assert.ok(Math.abs(pdf.getPage(0).getWidth() - width) < .001);
+          assert.ok(Math.abs(pdf.getPage(0).getHeight() - height) < .001);
         } else {
           assert.equal(bytes.subarray(6, 11).toString('ascii'), 'JFIF\0');
           assert.deepEqual([...bytes.subarray(13, 18)], [1, 1, 44, 1, 44]);

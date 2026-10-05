@@ -4,7 +4,7 @@ import {
   getPreview, groups, headHeightMm, initialFrame, mmToPt, PHOTO_MM, PHOTO_SIZES,
   PREVIEW, previewToSource, pxAtDpi, sourceToPreview,
 } from './geometry';
-import { SHEETS, printLayout } from './layout';
+import { PAPERS, SHEETS, printLayout } from './layout';
 import { withJpegDpi } from './jpeg';
 
 describe('photo geometry', () => {
@@ -149,10 +149,21 @@ describe('U.S. 2 x 2 inch geometry', () => {
 });
 
 describe('print positions and marks', () => {
+  it('provides a distinct layout and filename for every paper option in both countries', () => {
+    const keys = Object.keys(PAPERS).sort();
+    expect(Object.keys(SHEETS.de).sort()).toEqual(keys);
+    expect(Object.keys(SHEETS.us).sort()).toEqual(keys);
+    expect(new Set(Object.values(PAPERS).map(({ filename }) => filename)).size).toBe(keys.length);
+  });
+
   it.each([
     ['de', 'letter', 215.9, 279.4, 612, 792, 4],
+    ['de', 'a4', 210, 297, 595.2755905511812, 841.8897637795276, 4],
+    ['de', 'photo10x15', 100, 150, 283.46456692913387, 425.19685039370086, 2],
     ['de', 'photo4x6', 101.6, 152.4, 288, 432, 2],
     ['us', 'letter', 215.9, 279.4, 612, 792, 4],
+    ['us', 'a4', 210, 297, 595.2755905511812, 841.8897637795276, 4],
+    ['us', 'photo10x15', 150, 100, 425.19685039370086, 283.46456692913387, 2],
     ['us', 'photo4x6', 152.4, 101.6, 432, 288, 2],
   ] as const)('lays out %s %s at physical sheet size with the expected photo count', (format, key, width, height, pointsWide, pointsHigh, copies) => {
     const sheet = SHEETS[format][key];

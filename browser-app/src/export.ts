@@ -3,7 +3,7 @@ import {
   BLEED_MM, DPI, type Frame, PHOTO_SIZES, PX_PER_MM, getPreview, pxAtDpi,
 } from './geometry';
 import { withJpegDpi } from './jpeg';
-import { type PaperSize, SHEETS, printLayout, pt } from './layout';
+import { type PaperSize, PAPERS, SHEETS, printLayout, pt } from './layout';
 
 function renderPhoto(image: HTMLImageElement, frame: Frame, bleedMm: number): HTMLCanvasElement {
   const photo = PHOTO_SIZES[frame.format];
@@ -39,27 +39,28 @@ export async function printPdf(image: HTMLImageElement, frame: Frame, paper: Pap
   const bytes = await jpegBytes(renderPhoto(image, frame, BLEED_MM));
   const doc = await PDFDocument.create();
   const sheet = SHEETS[frame.format][paper];
+  const paperDefinition = PAPERS[paper];
   const page = doc.addPage([pt(sheet.width), pt(sheet.height)]);
   const photo = await doc.embedJpg(bytes);
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const black = rgb(0.12, 0.16, 0.22);
-  if (paper === 'letter') {
+  if (!paperDefinition.photoPaper) {
     page.drawText(`${frame.format === 'us' ? 'U.S.' : 'GERMAN'} PASSPORT PHOTO - PRINT PROOF`, {
-      x: pt(31), y: pt(263), size: 12, font, color: black,
+      x: pt(31), y: pt(sheet.height - 16.4), size: 12, font, color: black,
     });
-    page.drawText('Print on US Letter (8.5 x 11 in) at actual size / 100%. Do not fit to page.', {
-      x: pt(31), y: pt(253), size: 9, font, color: black,
+    page.drawText(`Print on ${paperDefinition.pdfLabel} at actual size / 100%. Do not fit to page.`, {
+      x: pt(31), y: pt(sheet.height - 26.4), size: 9, font, color: black,
     });
   } else if (frame.format === 'de') {
-    page.drawText('GERMAN PASSPORT PHOTO - 4 x 6 IN', {
-      x: pt(8), y: pt(139), size: 10, font, color: black,
+    page.drawText(`GERMAN PASSPORT PHOTO - ${paperDefinition.pdfLabel}`, {
+      x: pt(8), y: pt(sheet.height - 13.4), size: 10, font, color: black,
     });
     page.drawText('Print at 100%. Disable borderless enlargement and auto-fit.', {
-      x: pt(8), y: pt(133), size: 8, font, color: black,
+      x: pt(8), y: pt(sheet.height - 19.4), size: 8, font, color: black,
     });
   } else {
-    page.drawText('U.S. PASSPORT | 4 x 6 LANDSCAPE | PRINT AT 100%', {
-      x: pt(8), y: pt(93), size: 9, font, color: black,
+    page.drawText(`U.S. PASSPORT | ${paperDefinition.pdfLabel} LANDSCAPE | PRINT AT 100%`, {
+      x: pt(8), y: pt(sheet.height - 8.6), size: 9, font, color: black,
     });
   }
   for (const position of sheet.positions) {
@@ -77,7 +78,7 @@ export async function printPdf(image: HTMLImageElement, frame: Frame, paper: Pap
     }
   }
   const size = PHOTO_SIZES[frame.format];
-  if (paper === 'letter') {
+  if (!paperDefinition.photoPaper) {
     page.drawText(`Cut at the aligned marks: each inner photo is exactly ${size.width} x ${size.height} mm.`, {
       x: pt(31), y: pt(65), size: 9, font, color: black,
     });
@@ -96,14 +97,14 @@ export async function printPdf(image: HTMLImageElement, frame: Frame, paper: Pap
       x: pt(8), y: pt(23), size: 7, font, color: black,
     });
   }
-  const rulerY = paper === 'letter' ? 40 : frame.format === 'us' ? 15 : 31;
+  const rulerY = !paperDefinition.photoPaper ? 40 : frame.format === 'us' ? 15 : 31;
   const rulerX = (sheet.width - 50) / 2;
   page.drawLine({ start: { x: pt(rulerX), y: pt(rulerY) }, end: { x: pt(rulerX + 50), y: pt(rulerY) }, thickness: pt(0.3), color: black });
   for (const x of [rulerX, rulerX + 50]) {
     page.drawLine({ start: { x: pt(x), y: pt(rulerY - 2) }, end: { x: pt(x), y: pt(rulerY + 2) }, thickness: pt(0.3), color: black });
   }
   page.drawText('50 mm', { x: pt(rulerX + 19), y: pt(rulerY + 3), size: 9, font, color: black });
-  if (paper === 'letter') {
+  if (!paperDefinition.photoPaper) {
     page.drawText('Acceptance and submission method depend on the authority; printed photos may not be accepted.', {
       x: pt(31), y: pt(25), size: 8, font, color: black,
     });

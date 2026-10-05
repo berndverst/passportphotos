@@ -6,7 +6,7 @@ import {
   headHeightMm, headRange, initialFrame, manualFrame, previewToSource, sourceToPreview,
 } from './geometry';
 import { download, photoJpeg, previewDraw, printPdf } from './export';
-import { type PaperSize, SHEETS } from './layout';
+import { type PaperSize, PAPERS, SHEETS } from './layout';
 
 type Detection = 'idle' | 'loading' | 'one' | 'none' | 'multiple' | 'error';
 type Marker = 'crown' | 'chin' | 'eyes';
@@ -82,6 +82,7 @@ export default function App() {
   const photo = PHOTO_SIZES[format];
   const range = headRange(format, age);
   const copies = SHEETS[format][paper].positions.length;
+  const paperDefinition = PAPERS[paper];
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -302,7 +303,7 @@ export default function App() {
     setError('');
     try {
       const blob = kind === 'pdf' ? await printPdf(image, frame, paper) : await photoJpeg(image, frame);
-      download(blob, `${format === 'us' ? 'us-passport-photo-2x2' : 'german-passport-photo-35x45'}${kind === 'pdf' ? `-${paper === 'letter' ? 'letter' : '4x6'}` : ''}.${kind}`);
+      download(blob, `${format === 'us' ? 'us-passport-photo-2x2' : 'german-passport-photo-35x45'}${kind === 'pdf' ? `-${PAPERS[paper].filename}` : ''}.${kind}`);
     } catch (cause) {
       setError(`Export failed: ${cause instanceof Error ? cause.message : String(cause)}`);
     } finally {
@@ -417,16 +418,17 @@ export default function App() {
         {exportBlockers.length > 0 && <div className="next-steps" role="status"><strong>To enable download:</strong><ul>{exportBlockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul></div>}
         <label className="field" htmlFor="paper">Print paper</label>
         <select id="paper" value={paper} onChange={(event) => setPaper(event.target.value as PaperSize)}>
-          <option value="letter">US Letter (8.5 × 11 in) · {SHEETS[format].letter.positions.length} photos</option>
-          <option value="photo4x6">Photo paper (4 × 6 in{format === 'us' ? ', landscape' : ''}) · {SHEETS[format].photo4x6.positions.length} photos</option>
+          {(Object.keys(PAPERS) as PaperSize[]).map((key) => <option key={key} value={key}>
+            {PAPERS[key].description}{PAPERS[key].photoPaper && format === 'us' ? ' · landscape' : ''} · {SHEETS[format][key].positions.length} photos
+          </option>)}
         </select>
         <div className="actions">
           <button type="button" disabled={!canExport} onClick={() => void exportFile('pdf')}>
-            Download {paper === 'letter' ? 'US Letter' : '4 × 6 in'} print PDF
+            Download {paperDefinition.label} print PDF
           </button>
           <button type="button" className="secondary" disabled={!canExport} onClick={() => void exportFile('jpg')}>Download 300 DPI JPG</button>
         </div>
-        <p className="helper">The PDF is authoritative for physical sizing: {copies} photos with a true {format === 'us' ? '2 × 2 in' : '35 × 45 mm'} inner trim, 1 mm outside bleed, cut marks, and a 50 mm ruler. Select <strong>{paper === 'letter' ? 'US Letter paper' : `4 × 6 in photo paper${format === 'us' ? ' in landscape' : ''}`} and actual size / 100%</strong>, never “fit to page”; measure the ruler before cutting. On photo paper, turn off borderless enlargement and automatic scaling or cropping. {format === 'us' ? 'Use photo-quality paper for a U.S. print application. The separate 600 × 600 JPG is not validated for online submission.' : 'JPG pixel sizes are rounded to whole pixels and its 300 DPI metadata is only a hint to print software.'}</p>
+        <p className="helper">The PDF is authoritative for physical sizing: {copies} photos with a true {format === 'us' ? '2 × 2 in' : '35 × 45 mm'} inner trim, 1 mm outside bleed, cut marks, and a 50 mm ruler. Select <strong>{paperDefinition.description}{paperDefinition.photoPaper && format === 'us' ? ' in landscape' : ''} and actual size / 100%</strong>, never “fit to page”; measure the ruler before cutting. On photo paper, turn off borderless enlargement and automatic scaling or cropping. {format === 'us' ? 'Use photo-quality paper for a U.S. print application. The separate 600 × 600 JPG is not validated for online submission.' : 'JPG pixel sizes are rounded to whole pixels and its 300 DPI metadata is only a hint to print software.'}</p>
       </section>
       <footer>All processing stays in this browser. Only app and bundled model files are downloaded from this site; your photo is never uploaded. No accounts, external APIs, or model CDNs. Verify current official rules for your application location.</footer>
     </main>

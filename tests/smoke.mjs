@@ -55,14 +55,21 @@ try {
     await page.locator('.review').innerText());
 
   async function verifyDownloads(format) {
-    for (const { value, name, width, height, copies } of [
-      { value: 'letter', name: 'US Letter', width: 612, height: 792, copies: 4 },
-      { value: 'photo4x6', name: '4 × 6 in', width: format === 'us' ? 432 : 288, height: format === 'us' ? 288 : 432, copies: 2 },
+    for (const { value, name, filename, pdfLabel, width, height, copies } of [
+      { value: 'letter', name: 'US Letter', filename: 'letter', pdfLabel: 'US Letter (8.5 x 11 in)', width: 612, height: 792, copies: 4 },
+      { value: 'a4', name: 'DIN A4', filename: 'a4', pdfLabel: 'DIN A4 (210 x 297 mm)', width: 210 * 72 / 25.4, height: 297 * 72 / 25.4, copies: 4 },
+      { value: 'photo10x15', name: '10 × 15 cm', filename: '10x15cm', pdfLabel: '10 x 15 CM', width: (format === 'us' ? 150 : 100) * 72 / 25.4, height: (format === 'us' ? 100 : 150) * 72 / 25.4, copies: 2 },
+      { value: 'photo4x6', name: '4 × 6 in', filename: '4x6', pdfLabel: '4 x 6 IN', width: format === 'us' ? 432 : 288, height: format === 'us' ? 288 : 432, copies: 2 },
     ]) {
       await page.locator('#paper').selectOption(value);
+      assert.equal(await page.locator('#paper option:checked').innerText(),
+        `${value.startsWith('photo') ? 'Photo paper' : name} (${value === 'letter' ? '8.5 × 11 in' : value === 'a4' ? '210 × 297 mm' : name})${value.startsWith('photo') && format === 'us' ? ' · landscape' : ''} · ${copies} photos`);
+      assert.ok((await page.locator('.review .helper strong').innerText()).includes(name));
       const pdfWait = page.waitForEvent('download');
       await page.getByRole('button', { name: `Download ${name} print PDF` }).click();
       const pdfDownload = await pdfWait;
+      assert.equal(pdfDownload.suggestedFilename(),
+        `${format === 'us' ? 'us-passport-photo-2x2' : 'german-passport-photo-35x45'}-${filename}.pdf`);
       const pdf = await PDFDocument.load(await readFile(await pdfDownload.path()));
       assert.equal(pdf.getPageCount(), 1);
       assert.ok(Math.abs(pdf.getPage(0).getWidth() - width) < .001);
@@ -79,6 +86,14 @@ try {
         .map(([, object]) => inflateSync(object.contents).toString('latin1')).join('\n');
       assert.equal((content.match(/\/Image-[^\s/]+\s+Do/g) || []).length, copies,
         `Expected ${copies} photographs on ${format} ${name}`);
+      const text = [...content.matchAll(/<([0-9a-f]+)>\s*Tj/gi)]
+        .map(([, hex]) => Buffer.from(hex, 'hex').toString('latin1')).join('\n');
+      assert.ok(text.includes(pdfLabel), `PDF instructions must identify ${name}: ${text}`);
+      assert.ok(text.includes('50 mm'), 'Every paper size needs its calibration label');
+      const lines = [...content.matchAll(/([-\d.]+)\s+([-\d.]+)\s+m\s+([-\d.]+)\s+([-\d.]+)\s+l/g)];
+      const rulers = lines.filter(([, x1, y1, x2, y2]) =>
+        y1 === y2 && Math.abs(Number(x2) - Number(x1) - 50 * 72 / 25.4) < .001);
+      assert.equal(rulers.length, 1, 'The calibration line must be exactly 50 mm');
     }
 
     const jpgWait = page.waitForEvent('download');
@@ -124,7 +139,7 @@ try {
   await verifyDownloads('us');
   assert.deepEqual(external, [], 'The editor should only request local resources');
   await verifyMobile(browser, `http://127.0.0.1:${port}/`, Buffer.from(data, 'base64'));
-  console.log('Browser smoke passed: German and U.S. framing, four Letter/two 4x6 photos, JPEG dimensions and DPI.');
+  console.log('Browser smoke passed: German/U.S. framing, Letter/A4/10x15cm/4x6 PDF dimensions, photo counts, filenames, instructions and 50 mm rulers; JPEG dimensions and DPI.');
 } finally {
   await browser?.close();
   await server.close();
