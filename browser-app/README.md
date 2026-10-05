@@ -6,9 +6,15 @@ This folder is independent of the original project. It includes its own sources,
 
 ## Deploy to GitHub Pages
 
+In this repository, the root-level `.github/workflows/deploy-pages.yml` builds and deploys this folder on pushes to `main`. The custom domain is `passportphotos.bernd.dev`; `public/CNAME` is included in the build. Repository Pages settings must use **GitHub Actions** and the same custom domain. Point the DNS CNAME `passportphotos` at `berndverst.github.io` (Cloudflare: **DNS only**), then enable **Enforce HTTPS** once GitHub provisions the certificate.
+
+To deploy this standalone edition in another repository:
+
 1. Put the **contents of this folder at the root of a new GitHub repository**, including the hidden `.github` folder and all of `public`. Do not copy the original project's `node_modules` or `dist`.
 2. In the repository's **Settings > Pages > Build and deployment**, select **GitHub Actions**.
 3. Push to `main`, or run **Deploy browser app to GitHub Pages** manually from the Actions tab. If your default branch is not `main`, update the workflow's push branch first.
+
+Remove or replace `public/CNAME` when deploying with a different hostname, and configure any custom domain in that repository's Pages settings as well.
 
 The included `.github/workflows/deploy-pages.yml` installs build dependencies, runs unit tests, builds `dist`, and deploys **only those static files**. Node.js is needed for building, not for hosting or using the deployed app. Relative asset paths support both `https://OWNER.github.io/REPOSITORY/` and a root/custom-domain site without hardcoding a repository name. Use the site's trailing-slash URL; this is a single-page tool, not a client-side router.
 

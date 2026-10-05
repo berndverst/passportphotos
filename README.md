@@ -2,6 +2,22 @@
 
 A browser-based JPG crop and print tool for **German 35 × 45 mm** and **U.S. 2 × 2 in (50.8 × 50.8 mm)** passport photos. Photos and face detection stay on your device: the face model and MediaPipe WebAssembly runtime are bundled locally, with no photo-upload endpoint. The app does not replace an official photographer, certify eligibility, or repair occlusion, extra people/objects, blur, harsh shadows, lighting, or pose.
 
+## Hosted site and deployment
+
+The hosted browser-only edition is published at **https://passportphotos.bernd.dev/**. Its sources and bundled model/runtime assets are in `browser-app`; the root-level `.github/workflows/deploy-pages.yml` runs its unit tests, builds `browser-app/dist`, and deploys that directory through GitHub Actions on every push to `main`. No separate `gh-pages` branch or server backend is needed. To preview the hosted edition locally, run `npm ci`, `npm run build`, and `npm run preview` from `browser-app`.
+
+In **Settings > Pages**, the deployment source must be **GitHub Actions** and the custom domain must be `passportphotos.bernd.dev`. `browser-app/public/CNAME` is copied into the deployed build; for Actions-based Pages deployments, the domain must also be configured in the repository's Pages settings.
+
+Configure this record at the DNS host for `bernd.dev`:
+
+| Type | Name | Target |
+| --- | --- | --- |
+| CNAME | `passportphotos` | `berndverst.github.io` |
+
+The target is the GitHub account's Pages hostname, not a repository URL or a value containing `/passportphotos`. On Cloudflare, use **DNS only** (not proxied) for domain verification and HTTPS certificate provisioning. After DNS propagates and GitHub provisions the certificate, enable **Enforce HTTPS** in the repository's Pages settings. The `.dev` domain requires HTTPS in browsers, so the custom URL will not be usable until its certificate is ready.
+
+See [`browser-app/README.md`](browser-app/README.md) for the hosted edition's privacy, static-hosting, and production smoke-test details.
+
 ## Run locally
 
 Requires Node.js 20.19+ or 22.12+.
