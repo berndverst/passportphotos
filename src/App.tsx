@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent, type PointerEvent } from 'react';
 import type { FaceDetector } from '@mediapipe/tasks-vision';
 import {
-  type AgeGroup, type Anchors, type Frame, type PhotoFormat, type Point,
-  PHOTO_SIZES, PX_PER_MM, US_EYES, eyeHeightMm, frameProblems, getPreview, groups,
-  headHeightMm, headRange, initialFrame, manualFrame, previewToSource, sourceToPreview,
+  type AgeGroup, type Anchors, type Frame, type Point,
+  PHOTO_SIZES, PX_PER_MM, US_EYES, eyeHeightMm, frameProblems, getPreview,
+  headHeightMm, headRange, initialFrame, manualFrame, markedWidthMm, previewToSource, sourceToPreview,
 } from './geometry';
 import { download, photoJpeg, previewDraw, printPdf } from './export';
 import { type PaperSize, PAPERS, SHEETS } from './layout';
+import { COUNTRIES, getCountry, getProfile, rangeText, type DocumentType } from './requirements';
 
 type Detection = 'idle' | 'loading' | 'one' | 'none' | 'multiple' | 'error';
-type Marker = 'crown' | 'chin' | 'eyes';
+type Marker = 'crown' | 'chin' | 'eyes' | 'left' | 'right';
 type FaceSuggestion = {
   box: { originX: number; originY: number; width: number; height: number };
   eyes?: Point;
@@ -23,6 +24,12 @@ function fallbackAnchors(frame: Frame): Anchors {
     chin: previewToSource({ x: preview.width / 2, y: frame.format === 'de' ? 375 : preview.height * 0.78 }, frame),
     eyes: frame.format === 'us'
       ? previewToSource({ x: preview.width / 2, y: preview.height - US_EYES.target * PX_PER_MM }, frame)
+      : null,
+    left: frame.requirements?.width
+      ? previewToSource({ x: preview.width / 2 - frame.requirements.width.target * PX_PER_MM / 2, y: preview.height / 2 }, frame)
+      : null,
+    right: frame.requirements?.width
+      ? previewToSource({ x: preview.width / 2 + frame.requirements.width.target * PX_PER_MM / 2, y: preview.height / 2 }, frame)
       : null,
   };
 }
@@ -60,7 +67,9 @@ function renderMarker(ctx: CanvasRenderingContext2D, point: Point, label: string
 }
 
 export default function App() {
-  const [format, setFormat] = useState<PhotoFormat>('de');
+  const [selection, setSelection] = useState<{ country: ReturnType<typeof getCountry>; document: DocumentType }>({
+    country: getCountry('de'), document: 'passport',
+  });
   const [age, setAge] = useState<AgeGroup>('adult');
   const [paper, setPaper] = useState<PaperSize>('letter');
   const [detected, setDetected] = useState<FaceSuggestion | null>(null);
@@ -68,7 +77,7 @@ export default function App() {
   const [frame, setFrame] = useState<Frame | null>(null);
   const [baseScale, setBaseScale] = useState(1);
   const [anchors, setAnchors] = useState<Anchors>({ crown: null, chin: null });
-  const [confirmed, setConfirmed] = useState({ crown: false, chin: false, eyes: false });
+  const [confirmed, setConfirmed] = useState({ crown: false, chin: false, eyes: false, left: false, right: false });
   const [activeMarker, setActiveMarker] = useState<Marker | null>(null);
   const [detection, setDetection] = useState<Detection>('idle');
   const [error, setError] = useState('');
@@ -78,11 +87,22 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drag = useRef<{ pointerId: number; point: Point } | null>(null);
   const request = useRef(0);
+  const { country, document: documentType } = selection;
+  const profile = getProfile(country, documentType);
+  const format = profile.format;
   const preview = getPreview(format);
   const photo = PHOTO_SIZES[format];
-  const range = headRange(format, age);
+  const range = headRange(format, age, profile.framing);
   const copies = SHEETS[format][paper].positions.length;
   const paperDefinition = PAPERS[paper];
+  const markers: Marker[] = [
+    'crown', 'chin', ...(format === 'us' ? ['eyes'] as const : []),
+    ...(profile.framing.width ? ['left', 'right'] as const : []),
+  ];
+  const markerLabel = (marker: Marker) => marker === 'crown' ? format === 'gr' ? 'top of forehead' : 'top of head (crown)' :
+    marker === 'eyes' ? 'eye line' : marker === 'left' ? 'left measurement point' :
+      marker === 'right' ? 'right measurement point' : 'chin';
+  const trimLabel = format === 'us' ? '2 × 2 in' : `${photo.width} × ${photo.height} mm`;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -101,9 +121,11 @@ export default function App() {
     ctx.lineTo(size.width / 2, size.height);
     ctx.stroke();
     ctx.restore();
-    if (anchors.crown) renderMarker(ctx, sourceToPreview(anchors.crown, frame), 'Top of head', '#0057b8');
+    if (anchors.crown) renderMarker(ctx, sourceToPreview(anchors.crown, frame), frame.format === 'gr' ? 'Top of forehead' : 'Top of head', '#0057b8');
     if (anchors.chin) renderMarker(ctx, sourceToPreview(anchors.chin, frame), 'Chin', '#ae3400');
     if (frame.format === 'us' && anchors.eyes) renderMarker(ctx, sourceToPreview(anchors.eyes, frame), 'Eyes', '#5e2381');
+    if (anchors.left) renderMarker(ctx, sourceToPreview(anchors.left, frame), 'Left', '#5e2381');
+    if (anchors.right) renderMarker(ctx, sourceToPreview(anchors.right, frame), 'Right', '#5e2381');
   }, [image, frame, anchors]);
 
   const problems = frame && image ? frameProblems(frame, anchors, age, image) : [];
@@ -118,29 +140,35 @@ export default function App() {
     if (!confirmed.crown) exportBlockers.push('Confirm the top-of-head marker.');
     if (!confirmed.chin) exportBlockers.push('Confirm the chin marker.');
     if (format === 'us' && !confirmed.eyes) exportBlockers.push('Confirm the eye-line marker.');
+    if (profile.framing.width && (!confirmed.left || !confirmed.right)) exportBlockers.push('Confirm both horizontal measurement markers.');
     if (!reviewed) exportBlockers.push('Complete the visual quality check.');
     if (problems.length > 0) exportBlockers.push('Fix the crop and measurement warnings above.');
   }
   if (exporting) exportBlockers.push('Wait for the export to finish.');
   const canExport = exportBlockers.length === 0 && Boolean(image && frame && (detection === 'one' || detection === 'none'));
 
-  function changeFormat(next: PhotoFormat) {
+  function changeSelection(code: string, document: DocumentType) {
+    const nextCountry = getCountry(code);
+    const nextDocument = nextCountry.profiles[document] ? document :
+      nextCountry.profiles.passport ? 'passport' : 'visa';
+    const nextProfile = getProfile(nextCountry, nextDocument);
+    const next = nextProfile.format;
     drag.current = null;
-    setFormat(next);
+    setSelection({ country: nextCountry, document: nextDocument });
     setAge('adult');
-    setConfirmed({ crown: false, chin: false, eyes: false });
+    setConfirmed({ crown: false, chin: false, eyes: false, left: false, right: false });
     setActiveMarker(null);
     setReviewed(false);
     if (detection === 'one') setError('');
-    if (detection === 'none') setError(`No face was detected. Confirm one person and place all ${next === 'us' ? 'three' : 'two'} markers manually.`);
+    if (detection === 'none') setError('No face was detected. Confirm one person and place all required markers manually.');
     if (!image) return;
     if (detection === 'one' && detected) {
-      const suggested = initialFrame(detected.box, 'adult', next, detected.eyes);
+      const suggested = initialFrame(detected.box, 'adult', next, detected.eyes, nextProfile.framing, nextProfile.dpi);
       setFrame(suggested.frame);
       setAnchors(suggested.anchors);
       setBaseScale(suggested.frame.scale);
     } else {
-      const fallback = manualFrame(image.naturalWidth, image.naturalHeight, next);
+      const fallback = manualFrame(image.naturalWidth, image.naturalHeight, next, nextProfile.framing, nextProfile.dpi);
       setFrame(fallback);
       setAnchors(fallbackAnchors(fallback));
       setBaseScale(fallback.scale);
@@ -157,7 +185,7 @@ export default function App() {
     setImage(null);
     setFrame(null);
     setAnchors({ crown: null, chin: null, eyes: null });
-    setConfirmed({ crown: false, chin: false, eyes: false });
+    setConfirmed({ crown: false, chin: false, eyes: false, left: false, right: false });
     setDetected(null);
     setReviewed(false);
     setOnePerson(false);
@@ -178,7 +206,7 @@ export default function App() {
       loaded.src = url;
       await loaded.decode();
       if (id !== request.current) return;
-      const fallback = manualFrame(loaded.naturalWidth, loaded.naturalHeight, format);
+      const fallback = manualFrame(loaded.naturalWidth, loaded.naturalHeight, format, profile.framing, profile.dpi);
       setImage(loaded);
       setFrame(fallback);
       setBaseScale(fallback.scale);
@@ -192,7 +220,7 @@ export default function App() {
           setError('Several faces were detected. Use a new portrait with only the applicant; export is blocked.');
         } else if (detections.length === 0) {
           setDetection('none');
-          setError(`No face was detected. If this really shows one person, position and confirm all ${format === 'us' ? 'three' : 'two'} markers manually, then confirm the single-person check below.`);
+          setError(`No face was detected. If this really shows one person, position and confirm all ${markers.length} required markers manually, then confirm the single-person check below.`);
         } else {
           const box = detections[0].boundingBox;
           if (!box) throw new Error('The face detector returned no bounding box.');
@@ -202,7 +230,7 @@ export default function App() {
             y: (keypoints[0].y + keypoints[1].y) * loaded.naturalHeight / 2,
           } : undefined;
           setDetected({ box, eyes });
-          const suggested = initialFrame(box, age, format, eyes);
+          const suggested = initialFrame(box, age, format, eyes, profile.framing, profile.dpi);
           setFrame(suggested.frame);
           setBaseScale(suggested.frame.scale);
           setAnchors(suggested.anchors);
@@ -225,8 +253,7 @@ export default function App() {
   function confirmMarker(marker: Marker, point?: Point) {
     if (point) setAnchors((previous) => ({ ...previous, [marker]: point }));
     setConfirmed((previous) => ({ ...previous, [marker]: true }));
-    setActiveMarker(marker === 'crown' && !confirmed.chin ? 'chin' :
-      marker !== 'eyes' && format === 'us' && !confirmed.eyes ? 'eyes' : null);
+    setActiveMarker(markers.find((next) => next !== marker && !confirmed[next]) ?? null);
   }
 
   function canvasPosition(event: { clientX: number; clientY: number }): Point {
@@ -302,8 +329,10 @@ export default function App() {
     setExporting(true);
     setError('');
     try {
-      const blob = kind === 'pdf' ? await printPdf(image, frame, paper) : await photoJpeg(image, frame);
-      download(blob, `${format === 'us' ? 'us-passport-photo-2x2' : 'german-passport-photo-35x45'}${kind === 'pdf' ? `-${PAPERS[paper].filename}` : ''}.${kind}`);
+      const blob = kind === 'pdf'
+        ? await printPdf(image, frame, paper, `${country.name.toUpperCase()} ${documentType.toUpperCase()} PHOTO`)
+        : await photoJpeg(image, frame);
+      download(blob, `${country.code}-${documentType}-photo-${format === 'us' ? '2x2in' : `${photo.width}x${photo.height}mm`}${kind === 'pdf' ? `-${PAPERS[paper].filename}` : ''}.${kind}`);
     } catch (cause) {
       setError(`Export failed: ${cause instanceof Error ? cause.message : String(cause)}`);
     } finally {
@@ -315,47 +344,53 @@ export default function App() {
     <main className="app">
       <header className="hero">
         <span className="eyebrow">PRIVATE · ON THIS DEVICE</span>
-        <h1>{format === 'de' ? 'German' : 'U.S.'} passport photo</h1>
-        <p>Frame a JPG for a {format === 'de' ? '35 × 45 mm' : '2 × 2 in (50.8 × 50.8 mm)'} photo. Detection, editing, and export run in your browser; the image is not uploaded.</p>
+        <h1>{country.name} {documentType} photos</h1>
+        <p>Frame a JPG for a {trimLabel} {documentType} photo. Detection, editing, and export run in your browser; the image is not uploaded.</p>
       </header>
 
       <section className="notice" aria-label="Submission policy">
-        <strong>Check your authority’s submission rules first.</strong> {format === 'de'
-          ? 'In Germany, domestic applications generally require secure digital capture; a home-printed or self-generated photo may not be accepted.'
-          : 'U.S. print applications require photo-quality paper; online applications have separate file rules. This printable JPG is not a validated online-submission file.'} This tool cannot certify eligibility.
+        <strong>Check your authority’s submission rules first.</strong> {profile.submission} Visa submission requirements depend on the consulate and application type. This tool cannot certify eligibility.
       </section>
 
       <div className="workspace">
         <section className="panel controls" aria-label="Photo setup">
           <h2>1. Choose your portrait</h2>
-          <label className="field" htmlFor="format">Passport country</label>
-          <select id="format" value={format} disabled={detection === 'loading'}
-            onChange={(event) => changeFormat(event.target.value as PhotoFormat)}>
-            <option value="de">Germany · 35 × 45 mm</option>
-            <option value="us">United States · 2 × 2 in</option>
+          <label className="field" htmlFor="format">Passport or visa country</label>
+          <select id="format" value={country.code} disabled={detection === 'loading' || exporting}
+            onChange={(event) => changeSelection(event.target.value, documentType)}>
+            {COUNTRIES.map((entry) => <option key={entry.code} value={entry.code}>{entry.name}{entry.eu ? ' · EU' : ''}</option>)}
           </select>
+          <p className="helper">For a passport, choose the issuing country. For a visa, choose the destination country, not your citizenship.</p>
+          <label className="field" htmlFor="document">Document type</label>
+          <select id="document" value={documentType} disabled={detection === 'loading' || exporting}
+            onChange={(event) => changeSelection(country.code, event.target.value === 'visa' ? 'visa' : 'passport')}>
+            <option value="passport" disabled={!country.profiles.passport}>Passport{!country.profiles.passport ? ' · not verified' : ''}</option>
+            <option value="visa" disabled={!country.profiles.visa}>Visa{!country.profiles.visa ? ' · not verified' : ''}</option>
+          </select>
+          <p className="helper">Only countries and document types with clear official guidance are offered. EU requirements are country-specific, not interchangeable.</p>
+          {(!country.profiles.passport || !country.profiles.visa) && <p className="helper" role="status">{country.name}: only {documentType} requirements have been verified; the other document type is unavailable.</p>}
           <label className="field" htmlFor="photo">Original JPG portrait (stays local)</label>
           <input id="photo" type="file" accept=".jpg,.jpeg,image/jpeg" onChange={openFile} />
           <label className="field" htmlFor="age">Applicant</label>
           <select id="age" value={age} onChange={(event) => { setAge(event.target.value as AgeGroup); setReviewed(false); }}>
-            {Object.entries(groups).map(([key, group]) => <option key={key} value={key}>
-              {format === 'de' ? group.name : key === 'adult' ? 'Adult' : key === 'child' ? 'Child (age 1+)' : 'Infant (under 1)'}
-            </option>)}
+            {Object.entries(profile.ages).map(([key, name]) => <option key={key} value={key}>{name}</option>)}
           </select>
-          <p className="helper">{format === 'de' ? groups[age].note
-            : `Head (not hair or hairstyle) to chin: 1–1⅜ in (25.4–34.925 mm). Eyes: 1⅛–1⅜ in (28.575–34.925 mm) above the bottom. ${age === 'infant' ? 'An infant’s eyes may be partly or fully closed; minor head tilt may be acceptable.' : 'Eyes should be visible and open.'}`}</p>
-          <p className="helper">{format === 'de'
-            ? 'Use a sharp, evenly lit, front-facing photo against a plain, shadow-free background with natural skin tones. No other person or object may appear. Retake if the face is hidden, blurred, strongly tilted, or in harsh shadow; software cannot fix these reliably.'
-            : 'Use a color photo taken in the last six months with a plain white or off-white background, even light, natural skin tones, a clear frontal face and natural expression. No glasses (except documented medical necessity), no headwear (except qualifying religious/medical reasons), no filters or altered facial features, and no other person. Retake for blur, heavy shadow, occlusion, or turned pose.'}</p>
+          <p className="helper">{country.eu ? 'EU · ' : ''}Chin to {profile.headLandmark}: {rangeText(range)}. {format === 'us' && 'Eye line: 1⅛–1⅜ in (28.575–34.925 mm) above the bottom.'}</p>
+          {profile.ageNotes && <p className="helper">{profile.ageNotes[age]}</p>}
+          <p className="helper">Use a sharp, evenly lit frontal color photo with natural skin tones, a neutral expression, closed mouth and visible open eyes unless a documented age-specific exception below applies. No retouching, other people or objects. Retake for blur, shadows, occlusion or a turned face; software cannot fix these reliably.</p>
+          <p className="helper">{profile.background} {profile.quality}</p>
+          {profile.widthLandmarks && <p className="helper">Horizontal measurement: mark the {profile.widthLandmarks}; {rangeText(profile.framing.width!)}.</p>}
+          {profile.framing.topGap && <p className="helper">Top-of-head to top edge: {rangeText(profile.framing.topGap)}. Chin to bottom edge: {rangeText(profile.framing.bottomGap!)}.</p>}
+          <p className="helper">{profile.sources.map((entry, index) => <span key={entry.url}>{index > 0 && ' · '}<a href={entry.url} target="_blank" rel="noreferrer">{entry.name}</a></span>)}</p>
           {format === 'us' && <p className="helper">U.S. print layout needs the full 2 × 2 in square plus 1 mm of photo outside every edge (52.8 × 52.8 mm of source coverage). A tightly cropped original may need retaking to keep the correct head size and full bleed.</p>}
         </section>
 
         <section className={`panel preview-panel preview-${format}`} aria-label="Crop preview">
-          <div className="preview-header"><h2>Photo preview</h2><span>{format === 'us' ? '2 × 2 in' : '35 × 45 mm'} trim</span></div>
+          <div className="preview-header"><h2>Photo preview</h2><span>{trimLabel} trim</span></div>
           {image && frame ? (
             <canvas ref={canvasRef} width={preview.width} height={preview.height}
               tabIndex={0} role="img"
-              aria-label={`Passport photo crop. ${activeMarker ? `Move ${activeMarker === 'crown' ? 'top of head' : activeMarker === 'eyes' ? 'eye line' : 'chin'} with arrows and confirm with Enter.` : 'Drag or use arrow keys to pan.'}`}
+              aria-label={`Passport or visa photo crop. ${activeMarker ? `Move ${markerLabel(activeMarker)} with arrows and confirm with Enter.` : 'Drag or use arrow keys to pan.'}`}
               aria-describedby="preview-instructions"
               onClick={clickPreview} onPointerDown={pointerDown} onPointerMove={pointerMove}
               onPointerUp={endPointer} onPointerCancel={endPointer} onLostPointerCapture={endPointer}
@@ -368,7 +403,7 @@ export default function App() {
                 <button type="button" className={activeMarker === null ? 'selected' : 'secondary'}
                   aria-pressed={activeMarker === null}
                   onClick={() => { drag.current = null; setActiveMarker(null); }}>Pan photo</button>
-                {(format === 'us' ? ['crown', 'chin', 'eyes'] as const : ['crown', 'chin'] as const).map((marker) => (
+                {markers.map((marker) => (
                   <button
                     key={marker}
                     type="button"
@@ -376,12 +411,12 @@ export default function App() {
                     aria-pressed={activeMarker === marker}
                     onClick={() => { drag.current = null; setActiveMarker(marker); setConfirmed((previous) => ({ ...previous, [marker]: false })); }}
                   >
-                    {confirmed[marker] ? '✓ ' : ''}Set {marker === 'crown' ? 'top of head (crown)' : marker === 'eyes' ? 'eye line' : 'chin'}
+                    {confirmed[marker] ? '✓ ' : ''}Set {markerLabel(marker)}
                   </button>
                 ))}
               </div>
               <p id="preview-instructions" className="helper" aria-live="polite">{activeMarker
-                ? `Tap or click the ${activeMarker === 'crown' ? 'top of the head' : activeMarker === 'eyes' ? 'point midway between both eyes' : 'bottom of the chin'} in the preview.`
+                ? `Tap or click the ${activeMarker === 'crown' ? profile.headLandmark : markerLabel(activeMarker)} in the preview.`
                 : 'Drag the preview with one finger or a mouse to pan. Use the sliders to zoom and rotate. Scroll the page outside the photo.'}</p>
               <label className="field" htmlFor="zoom">Zoom · {Math.round((frame.scale / baseScale) * 100)}%</label>
               <input id="zoom" type="range" min="35" max="250" step="1"
@@ -390,30 +425,29 @@ export default function App() {
               <label className="field" htmlFor="rotation">Rotate image · {frame.angle}° (−180° to +180°)</label>
               <input id="rotation" type="range" min="-180" max="180" step="1" value={frame.angle}
                 onChange={(event) => setFrame({ ...frame, angle: Number(event.target.value) })} />
-              <p className="helper">{format === 'de'
-                ? 'Mark the natural top of the head (crown, with normal hair), not stray strands or headwear.'
-                : 'For U.S. photos, mark the anatomical top of the head—not the hairstyle or hairline—and the bottom of the chin without facial hair. For the eye line, tap midway between both eyes (eyelids if an infant’s eyes are closed).'} For keyboard use, focus the preview, adjust with arrow keys (Shift = 10 pixels), and press Enter to confirm.</p>
+              <p className="helper">Mark the {profile.headLandmark} and the bottom of the chin without facial hair. {format === 'us' && 'For the eye line, tap midway between both eyes (eyelids if an infant’s eyes are closed).'} For keyboard use, focus the preview, adjust with arrow keys (Shift = 10 pixels), and press Enter to confirm.</p>
               <p className="helper">Rotation can straighten a sideways camera image; it cannot fix a face that was not photographed straight on.</p>
               <p className="measurement" aria-live="polite">
-                Chin to top of head: <strong>{height === null ? 'not marked' : `${height.toFixed(1)} mm`}</strong>
-                <small>Target: {range.min}–{range.max} mm within the {photo.width} × {photo.height} mm trim.</small>
+                Chin to {format === 'gr' ? 'top of forehead' : 'top of head'}: <strong>{height === null ? 'not marked' : `${height.toFixed(1)} mm`}</strong>
+                <small>Target: {rangeText(range)} within the {photo.width} × {photo.height} mm trim.</small>
+                {profile.framing.width && <small>Marked width: {frame && markedWidthMm(anchors, frame) !== null ? `${markedWidthMm(anchors, frame)!.toFixed(1)} mm` : 'not marked'} (target {rangeText(profile.framing.width)}).</small>}
                 {format === 'us' && <small>Eye line from bottom: {frame && eyeHeightMm(anchors, frame) !== null ? `${eyeHeightMm(anchors, frame)!.toFixed(1)} mm` : 'not marked'} (target {US_EYES.min}–{US_EYES.max} mm).</small>}
               </p>
             </div>
           )}
-          <p className="helper">Dashed border = exact trimmed edge. {format === 'us' ? 'Top-of-head, chin and eye-line' : 'Top-of-head and chin'} markers are guides, not part of the exported photo. Export adds 1 mm of photo <em>outside</em> each trim edge.</p>
+          <p className="helper">Dashed border = exact trimmed edge. All markers are guides, not part of the exported photo. Export adds 1 mm of photo <em>outside</em> each trim edge.</p>
         </section>
       </div>
 
       <section className="panel review" aria-label="Review and export">
         <h2>3. Inspect and export</h2>
         {detection === 'loading' && <p role="status">Loading local face detection…</p>}
-        {detection === 'one' && <p role="status">One face detected. Initial placement is approximate; confirm {format === 'us' ? 'the head, chin and eye line' : 'the top of the head and chin'} yourself.</p>}
+        {detection === 'one' && <p role="status">One face detected. Initial placement is approximate; confirm all required markers yourself.</p>}
         {error && <p className="alert" role="alert">{error}</p>}
         {image && detection === 'none' && <label className="check"><input type="checkbox" checked={onePerson} onChange={(e) => setOnePerson(e.target.checked)} />I confirm this photo shows exactly one person and no other person or object.</label>}
         {image && <label className="check"><input type="checkbox" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} />{format === 'us'
-          ? 'I checked the photo was taken within six months, has a plain white/off-white background, even light, natural color and expression, sharp full frontal face, no filters or facial retouching, no glasses or headwear unless properly excepted, no other person, and eyes open except for an infant. I understand this is not official approval.'
-          : 'I visually checked the full unobstructed face, suitable age-specific eye visibility, frontal pose, even lighting, plain background, sharpness, and no other person or object. I understand this is not an official approval.'}</label>}
+          ? 'I checked the photo was taken within six months, has a plain white/off-white background, even light, natural color, neutral expression with applicable infant exceptions, sharp full frontal face, no filters or facial retouching, no glasses or headwear unless properly excepted, no other person, and eyes open except for an infant. I understand this is not official approval.'
+          : `I visually checked the full unobstructed face, suitable age-specific eye visibility, frontal pose, even lighting, plain background, sharpness, and no other person or object. I checked the ${country.name} ${documentType} instructions above, including any measurements not automatically checked. I understand this is not an official approval.`}</label>}
         {image && problems.length > 0 && <div className="alert" role="status"><strong>Fix before export:</strong><ul>{problems.map((problem) => <li key={problem}>{problem}</li>)}</ul></div>}
         {exportBlockers.length > 0 && <div className="next-steps" role="status"><strong>To enable download:</strong><ul>{exportBlockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul></div>}
         <label className="field" htmlFor="paper">Print paper</label>
@@ -426,9 +460,9 @@ export default function App() {
           <button type="button" disabled={!canExport} onClick={() => void exportFile('pdf')}>
             Download {paperDefinition.label} print PDF
           </button>
-          <button type="button" className="secondary" disabled={!canExport} onClick={() => void exportFile('jpg')}>Download 300 DPI JPG</button>
+          <button type="button" className="secondary" disabled={!canExport} onClick={() => void exportFile('jpg')}>Download {profile.dpi} DPI JPG</button>
         </div>
-        <p className="helper">The PDF is authoritative for physical sizing: {copies} photos with a true {format === 'us' ? '2 × 2 in' : '35 × 45 mm'} inner trim, 1 mm outside bleed, cut marks, and a 50 mm ruler. Select <strong>{paperDefinition.description}{paperDefinition.photoPaper && format === 'us' ? ' in landscape' : ''} and actual size / 100%</strong>, never “fit to page”; measure the ruler before cutting. On photo paper, turn off borderless enlargement and automatic scaling or cropping. {format === 'us' ? 'Use photo-quality paper for a U.S. print application. The separate 600 × 600 JPG is not validated for online submission.' : 'JPG pixel sizes are rounded to whole pixels and its 300 DPI metadata is only a hint to print software.'}</p>
+        <p className="helper">The PDF is authoritative for physical sizing: {copies} photos with a true {trimLabel} inner trim, 1 mm outside bleed, cut marks, and a 50 mm ruler. Select <strong>{paperDefinition.description}{paperDefinition.photoPaper && format === 'us' ? ' in landscape' : ''} and actual size / 100%</strong>, never “fit to page”; measure the ruler before cutting. On photo paper, turn off borderless enlargement and automatic scaling or cropping. Use the paper type required by your authority. JPG pixel sizes are rounded to whole pixels and its {profile.dpi} DPI metadata is only a hint to print software. Online submission is not validated.</p>
       </section>
       <footer>All processing stays in this browser. No accounts, upload endpoint, or remote model requests. Verify current official rules for your application location.</footer>
     </main>

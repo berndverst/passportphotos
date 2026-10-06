@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { inflateSync } from 'node:zlib';
 import { chromium } from 'playwright-core';
-import { PDFDocument, PDFName } from 'pdf-lib';
+import { PDFDocument, PDFName, StandardFonts } from 'pdf-lib';
 import { createServer } from 'vite';
 import { verifyMobile } from './mobile.mjs';
+import { verifyCountryPresets } from './countries.mjs';
 
 const edge = process.env.EDGE_PATH || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const server = await createServer({ server: { host: '127.0.0.1', port: 0 } });
@@ -20,7 +21,11 @@ try {
         !request.url().startsWith(`blob:http://127.0.0.1:${port}/`)) external.push(request.url());
   });
   await page.goto(`http://127.0.0.1:${port}/`);
-  assert.match(await page.title(), /Passport photo/);
+  assert.equal(await page.title(), 'Passport & visa photos · local editor');
+  assert.equal(await page.getByRole('heading', { level: 1 }).innerText(), 'Germany passport photos');
+  assert.equal(await page.getByLabel('Passport or visa country', { exact: true }).inputValue(), 'de');
+  assert.match(await page.locator('.controls').innerText(), /For a visa, choose the destination country, not your citizenship/);
+  assert.match(await page.getByRole('region', { name: 'Submission policy' }).innerText(), /domestic passport applications/);
   await page.locator('#photo').setInputFiles({
     name: 'wrong.png', mimeType: 'image/png', buffer: Buffer.from('not a jpg'),
   });
@@ -55,6 +60,11 @@ try {
     await page.locator('.review').innerText());
 
   async function verifyDownloads(format) {
+    assert.equal(await page.getByRole('heading', { level: 1 }).innerText(),
+      `${format === 'us' ? 'United States' : 'Germany'} passport photos`);
+    assert.match(await page.locator('canvas.photo-preview').getAttribute('aria-label'), /^Passport or visa photo crop\./);
+    assert.match(await page.getByRole('region', { name: 'Submission policy' }).innerText(),
+      /Visa submission requirements depend on the consulate and application type/);
     for (const { value, name, filename, pdfLabel, width, height, copies } of [
       { value: 'letter', name: 'US Letter', filename: 'letter', pdfLabel: 'US Letter (8.5 x 11 in)', width: 612, height: 792, copies: 4 },
       { value: 'a4', name: 'DIN A4', filename: 'a4', pdfLabel: 'DIN A4 (210 x 297 mm)', width: 210 * 72 / 25.4, height: 297 * 72 / 25.4, copies: 4 },
@@ -69,7 +79,7 @@ try {
       await page.getByRole('button', { name: `Download ${name} print PDF` }).click();
       const pdfDownload = await pdfWait;
       assert.equal(pdfDownload.suggestedFilename(),
-        `${format === 'us' ? 'us-passport-photo-2x2' : 'german-passport-photo-35x45'}-${filename}.pdf`);
+        `${format}-passport-photo-${format === 'us' ? '2x2in' : '35x45mm'}-${filename}.pdf`);
       const pdf = await PDFDocument.load(await readFile(await pdfDownload.path()));
       assert.equal(pdf.getPageCount(), 1);
       assert.ok(Math.abs(pdf.getPage(0).getWidth() - width) < .001);
@@ -88,6 +98,14 @@ try {
         `Expected ${copies} photographs on ${format} ${name}`);
       const text = [...content.matchAll(/<([0-9a-f]+)>\s*Tj/gi)]
         .map(([, hex]) => Buffer.from(hex, 'hex').toString('latin1')).join('\n');
+      const heading = text.split('\n')[0];
+      assert.ok(heading.startsWith(`${format === 'us' ? 'UNITED STATES' : 'GERMANY'} PASSPORT PHOTO`),
+        `PDF heading must identify the country and document type: ${heading}`);
+      const font = await pdf.embedFont(StandardFonts.Helvetica);
+      const photoPaper = value.startsWith('photo');
+      const headingSize = photoPaper ? format === 'de' ? 8 : 9 : 12;
+      assert.ok(font.widthOfTextAtSize(heading, headingSize) <= width - (photoPaper ? 16 : 62) * 72 / 25.4,
+        `PDF heading must fit within the ${format} ${name} margins`);
       assert.ok(text.includes(pdfLabel), `PDF instructions must identify ${name}: ${text}`);
       assert.ok(text.includes('50 mm'), 'Every paper size needs its calibration label');
       const lines = [...content.matchAll(/([-\d.]+)\s+([-\d.]+)\s+m\s+([-\d.]+)\s+([-\d.]+)\s+l/g)];
@@ -99,6 +117,8 @@ try {
     const jpgWait = page.waitForEvent('download');
     await page.getByRole('button', { name: 'Download 300 DPI JPG' }).click();
     const jpgDownload = await jpgWait;
+    assert.equal(jpgDownload.suggestedFilename(),
+      `${format}-passport-photo-${format === 'us' ? '2x2in' : '35x45mm'}.jpg`);
     const jpg = await readFile(await jpgDownload.path());
     assert.equal(jpg.subarray(6, 11).toString('ascii'), 'JFIF\0');
     assert.deepEqual(Array.from(jpg.subarray(13, 18)), [1, 1, 44, 1, 44]);
@@ -117,7 +137,7 @@ try {
   assert.equal(await page.getByRole('button', { name: 'Download 4 × 6 in print PDF' }).isDisabled(), true,
     'Switching country requires new measurements and quality review');
   await page.locator('#age').selectOption('infant');
-  assert.match(await page.locator('.controls').innerText(), /eyes may be partly or fully closed/);
+  assert.match(await page.locator('.controls').innerText(), /Infants under one may have partly or fully closed eyes/);
   await page.locator('#age').selectOption('adult');
   await page.locator('#zoom').fill('35');
   assert.match(await page.locator('.review').innerText(), /trimmed photo extends beyond the source JPG/);
@@ -137,9 +157,10 @@ try {
   assert.equal(await page.getByRole('button', { name: 'Download 4 × 6 in print PDF' }).isEnabled(), true,
     await page.locator('.review').innerText());
   await verifyDownloads('us');
+  await verifyCountryPresets(page);
   assert.deepEqual(external, [], 'The editor should only request local resources');
   await verifyMobile(browser, `http://127.0.0.1:${port}/`, Buffer.from(data, 'base64'));
-  console.log('Browser smoke passed: German/U.S. framing, Letter/A4/10x15cm/4x6 PDF dimensions, photo counts, filenames, instructions and 50 mm rulers; JPEG dimensions and DPI.');
+  console.log('Browser smoke passed: verified EU/China/U.S. selection, document switching, framing, mobile layouts, PDF dimensions and copies, filenames, 50 mm rulers, and 300/400/1200 DPI JPEGs.');
 } finally {
   await browser?.close();
   await server.close();

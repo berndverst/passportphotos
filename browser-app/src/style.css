@@ -43,6 +43,8 @@ input[type="range"] { width: 100%; height: 44px; margin: 0; accent-color: #174ca
 .photo-preview.marking { cursor: crosshair; }
 .empty-preview { width: min(100%, 350px); aspect-ratio: 7 / 9; background: #e8eef6; border: 2px dashed #aebcd0; border-radius: 8px; display: grid; place-items: center; padding: 2rem; color: #566981; margin: auto; }
 .preview-us .empty-preview { aspect-ratio: 1; }
+.preview-cn .empty-preview { aspect-ratio: 11 / 16; }
+.preview-gr .empty-preview { aspect-ratio: 2 / 3; }
 .review { margin-top: 1.25rem; }
 .alert { border-radius: 9px; padding: .85rem 1rem; background: #fff0eb; border: 1px solid #e8aa91; color: #783116; }
 .alert ul { padding-left: 1.35rem; margin: .5rem 0 0; }
@@ -60,6 +62,8 @@ footer { margin-top: 1.5rem; font-size: .85rem; color: #566981; }
   .panel { padding: 1rem; }
   .photo-preview, .empty-preview { width: min(100%, 350px, 46svh); }
   .preview-us .photo-preview, .preview-us .empty-preview { width: min(100%, 350px, 60svh); }
+  .preview-cn .photo-preview, .preview-cn .empty-preview { width: min(100%, 350px, 41svh); }
+  .preview-gr .photo-preview, .preview-gr .empty-preview { width: min(100%, 350px, 40svh); }
   .marker-buttons button { flex: 1 1 130px; }
   .actions button { flex: 1 1 100%; }
 }

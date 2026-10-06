@@ -70,6 +70,30 @@ export const SHEETS = {
       positions: [{ x: 18.4, y: 31 }, { x: 83.2, y: 31 }],
     },
   },
+  cn: {
+    letter: {
+      width: 215.9, height: 279.4,
+      positions: [{ x: 47, y: 164 }, { x: 126, y: 164 }, { x: 47, y: 91 }, { x: 126, y: 91 }],
+    },
+    a4: {
+      width: 210, height: 297,
+      positions: [{ x: 44.05, y: 172.8 }, { x: 123.05, y: 172.8 }, { x: 44.05, y: 99.8 }, { x: 123.05, y: 99.8 }],
+    },
+    photo10x15: { width: 100, height: 150, positions: [{ x: 12, y: 71 }, { x: 55, y: 71 }] },
+    photo4x6: { width: 101.6, height: 152.4, positions: [{ x: 12.8, y: 71 }, { x: 55.8, y: 71 }] },
+  },
+  gr: {
+    letter: {
+      width: 215.9, height: 279.4,
+      positions: [{ x: 47, y: 164 }, { x: 126, y: 164 }, { x: 47, y: 91 }, { x: 126, y: 91 }],
+    },
+    a4: {
+      width: 210, height: 297,
+      positions: [{ x: 44.05, y: 172.8 }, { x: 123.05, y: 172.8 }, { x: 44.05, y: 99.8 }, { x: 123.05, y: 99.8 }],
+    },
+    photo10x15: { width: 100, height: 150, positions: [{ x: 30, y: 70 }] },
+    photo4x6: { width: 101.6, height: 152.4, positions: [{ x: 30.8, y: 70 }] },
+  },
 } as const;
 
 export function printLayout(x: number, y: number, format: PhotoFormat = 'de') {

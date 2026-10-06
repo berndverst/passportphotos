@@ -8,11 +8,12 @@ import { type PaperSize, PAPERS, SHEETS, printLayout, pt } from './layout';
 function renderPhoto(image: HTMLImageElement, frame: Frame, bleedMm: number): HTMLCanvasElement {
   const photo = PHOTO_SIZES[frame.format];
   const canvas = document.createElement('canvas');
-  canvas.width = pxAtDpi(photo.width + 2 * bleedMm);
-  canvas.height = pxAtDpi(photo.height + 2 * bleedMm);
+  const dpi = frame.dpi ?? DPI;
+  canvas.width = pxAtDpi(photo.width + 2 * bleedMm, dpi);
+  canvas.height = pxAtDpi(photo.height + 2 * bleedMm, dpi);
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Canvas rendering is not available in this browser.');
-  const ratio = DPI / 25.4 / PX_PER_MM;
+  const ratio = dpi / 25.4 / PX_PER_MM;
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.translate(canvas.width / 2, canvas.height / 2);
@@ -31,11 +32,13 @@ async function jpegBytes(canvas: HTMLCanvasElement): Promise<Uint8Array> {
 }
 
 export async function photoJpeg(image: HTMLImageElement, frame: Frame): Promise<Blob> {
-  const bytes = withJpegDpi(await jpegBytes(renderPhoto(image, frame, 0)));
+  const bytes = withJpegDpi(await jpegBytes(renderPhoto(image, frame, 0)), frame.dpi ?? DPI);
   return new Blob([new Uint8Array(bytes)], { type: 'image/jpeg' });
 }
 
-export async function printPdf(image: HTMLImageElement, frame: Frame, paper: PaperSize): Promise<Blob> {
+export async function printPdf(
+  image: HTMLImageElement, frame: Frame, paper: PaperSize, caption = 'PASSPORT / VISA PHOTO',
+): Promise<Blob> {
   const bytes = await jpegBytes(renderPhoto(image, frame, BLEED_MM));
   const doc = await PDFDocument.create();
   const sheet = SHEETS[frame.format][paper];
@@ -45,21 +48,21 @@ export async function printPdf(image: HTMLImageElement, frame: Frame, paper: Pap
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const black = rgb(0.12, 0.16, 0.22);
   if (!paperDefinition.photoPaper) {
-    page.drawText(`${frame.format === 'us' ? 'U.S.' : 'GERMAN'} PASSPORT PHOTO - PRINT PROOF`, {
+    page.drawText(`${caption} - PRINT PROOF`, {
       x: pt(31), y: pt(sheet.height - 16.4), size: 12, font, color: black,
     });
     page.drawText(`Print on ${paperDefinition.pdfLabel} at actual size / 100%. Do not fit to page.`, {
       x: pt(31), y: pt(sheet.height - 26.4), size: 9, font, color: black,
     });
-  } else if (frame.format === 'de') {
-    page.drawText(`GERMAN PASSPORT PHOTO - ${paperDefinition.pdfLabel}`, {
-      x: pt(8), y: pt(sheet.height - 13.4), size: 10, font, color: black,
+  } else if (frame.format !== 'us') {
+    page.drawText(`${caption} - ${paperDefinition.pdfLabel}`, {
+      x: pt(8), y: pt(sheet.height - 13.4), size: 8, font, color: black,
     });
     page.drawText('Print at 100%. Disable borderless enlargement and auto-fit.', {
       x: pt(8), y: pt(sheet.height - 19.4), size: 8, font, color: black,
     });
   } else {
-    page.drawText(`U.S. PASSPORT | ${paperDefinition.pdfLabel} LANDSCAPE | PRINT AT 100%`, {
+    page.drawText(`${caption} | ${paperDefinition.pdfLabel} LANDSCAPE | PRINT AT 100%`, {
       x: pt(8), y: pt(sheet.height - 8.6), size: 9, font, color: black,
     });
   }
@@ -85,8 +88,8 @@ export async function printPdf(image: HTMLImageElement, frame: Frame, paper: Pap
     page.drawText('Check the 50 mm line with a ruler before cutting. Marks and 1 mm bleed are OUTSIDE the photo.', {
       x: pt(31), y: pt(57), size: 8, font, color: black,
     });
-  } else if (frame.format === 'de') {
-    page.drawText('Cut at marks: each inner photo is 35 x 45 mm.', {
+  } else if (frame.format !== 'us') {
+    page.drawText(`Cut at marks: each inner photo is ${size.width} x ${size.height} mm.`, {
       x: pt(8), y: pt(58), size: 8, font, color: black,
     });
     page.drawText('1 mm bleed outside trim. Check the 50 mm line.', {
@@ -108,7 +111,7 @@ export async function printPdf(image: HTMLImageElement, frame: Frame, paper: Pap
     page.drawText('Acceptance and submission method depend on the authority; printed photos may not be accepted.', {
       x: pt(31), y: pt(25), size: 8, font, color: black,
     });
-  } else if (frame.format === 'de') {
+  } else if (frame.format !== 'us') {
     page.drawText('Check your authority; home prints may not be accepted.', {
       x: pt(8), y: pt(13), size: 7, font, color: black,
     });
